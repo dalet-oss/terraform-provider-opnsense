@@ -33,7 +33,7 @@ const (
 
 // DHCPStaticLeases abstract OPNSense DHCP Lease page
 type DHCPStaticLeases struct {
-	URI     string
+	RootURI string
 	Session *requests.Request
 	Cookies []*http.Cookie
 	CSRF    string
@@ -50,14 +50,22 @@ type DHCPLease struct {
 	Hostname  string
 }
 
+// DHCPInterface abstracts a network interface
+type DHCPInterface struct {
+	Name      string
+	FormName  string
+	FormValue string
+	Doc       *html.Node
+}
+
 // Authenticate allows authentication to OPNsense DHCP lease web page
 func (dhcp *DHCPStaticLeases) Authenticate(rootURI, user, password string) error {
 
-	dhcp.URI = fmt.Sprintf("%s/status_dhcp_leases.php", rootURI)
+	dhcp.RootURI = rootURI
 	dhcp.Session = requests.Requests()
 
 	// do a basic query
-	resp, err := dhcp.Session.Get(dhcp.URI)
+	resp, err := dhcp.Session.Get(dhcp.RootURI)
 	if err != nil {
 		return err
 	}
@@ -77,7 +85,7 @@ func (dhcp *DHCPStaticLeases) Authenticate(rootURI, user, password string) error
 		"passwordfld": password,
 	}
 	dhcp.Session.Header.Set("X-CSRFToken", dhcp.CSRF)
-	resp, err = dhcp.Session.Post(dhcp.URI, data)
+	resp, err = dhcp.Session.Post(dhcp.RootURI, data)
 	if err != nil {
 		return err
 	}
@@ -85,9 +93,11 @@ func (dhcp *DHCPStaticLeases) Authenticate(rootURI, user, password string) error
 	return nil
 }
 
-// GetHTMLPage renders the OPNsense DHCP lease web page
-func (dhcp *DHCPStaticLeases) GetHTMLPage() error {
-	resp, err := dhcp.Session.Get(dhcp.URI)
+// GetLeasePage renders the OPNsense DHCP lease web page
+func (dhcp *DHCPStaticLeases) GetLeasePage() error {
+
+	getURI := fmt.Sprintf("%s/status_dhcp_leases.php", dhcp.RootURI)
+	resp, err := dhcp.Session.Get(getURI)
 	if err != nil {
 		return err
 	}
@@ -126,6 +136,12 @@ func (dhcp *DHCPStaticLeases) PrintLeases() {
 // GetLeases extracts all DHCP leases from OPNsense DHCP lease web page
 func (dhcp *DHCPStaticLeases) GetLeases() error {
 
+	// Get Leases page
+	err := dhcp.GetLeasePage()
+	if err != nil {
+		panic(err)
+	}
+
 	// start by retrieving list of available fields
 	dhcp.GetFields()
 
@@ -135,6 +151,9 @@ func (dhcp *DHCPStaticLeases) GetLeases() error {
 		return err
 	}
 	entries := len(nodes)
+
+	// clean-up any previous leases
+	dhcp.Leases = nil
 
 	// retrieve all configured static DHCP leases
 	for i := 1; i < entries; i++ {
@@ -189,4 +208,70 @@ func (dhcp *DHCPStaticLeases) Get(idx int, field string) string {
 	}
 
 	return res
+}
+
+// Apply validates the configuration for a given interface and reload DHCP server
+func (dhcp *DHCPStaticLeases) Apply(itf *DHCPInterface) error {
+	// apply changes
+	data := requests.Datas{
+		itf.FormName: itf.FormValue,
+		"apply":      "Apply changes",
+		"if":         itf.Name,
+	}
+
+	applyURI := fmt.Sprintf("%s/services_dhcp.php?if=%s#", dhcp.RootURI, itf.Name)
+	_, err := dhcp.Session.Post(applyURI, data)
+	if err != nil {
+		return err
+	}
+	return nil
+}
+
+// CreateLease creates a new static lease
+func (dhcp *DHCPStaticLeases) CreateLease(lease *DHCPLease) error {
+
+	itf := DHCPInterface{
+		Name: lease.Interface,
+	}
+
+	// get the edit page to retrieve form secret values
+	editURI := fmt.Sprintf("%s/services_dhcp_edit.php?if=%s#", dhcp.RootURI, itf.Name)
+	resp, err := dhcp.Session.Get(editURI)
+	if err != nil {
+		return err
+	}
+	page := strings.NewReader(resp.Text())
+	itf.Doc, err = htmlquery.Parse(page)
+	if err != nil {
+		return err
+	}
+
+	q := fmt.Sprintf(`//div[@class="content-box"]//form//input`)
+	n := htmlquery.FindOne(itf.Doc, q)
+	itf.FormName = htmlquery.SelectAttr(n, "name")
+	itf.FormValue = htmlquery.SelectAttr(n, "value")
+
+	// create a new DHCP entry
+	data := requests.Datas{
+		itf.FormName: itf.FormValue,
+		"mac":        lease.MAC,
+		"cid":        lease.Hostname,
+		"ipaddr":     lease.IP,
+		"hostname":   lease.Hostname,
+		"descr":      lease.Hostname,
+		"Submit":     "Save",
+		"if":         lease.Interface,
+	}
+	resp, err = dhcp.Session.Post(editURI, data)
+	if err != nil {
+		return err
+	}
+
+	// apply changes
+	err = dhcp.Apply(&itf)
+	if err != nil {
+		return err
+	}
+
+	return nil
 }
