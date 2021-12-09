@@ -10,6 +10,9 @@ import (
 	"strings"
 )
 
+// DHCPEntryStartingRow exposes the HTML row where static maps actually start from
+const DHCPEntryStartingRow = 2
+
 const (
 	// DHCPFieldInterface refers to the HTML table field name for DHCP interface description
 	DHCPFieldInterface = "Interface"
@@ -29,6 +32,19 @@ const (
 	DHCPFieldStatus = "Status"
 	// DHCPFieldLease refers to the HTML table field name for DHCP lease type description
 	DHCPFieldLease = "Lease type"
+)
+
+const (
+	// DHCPStaticARP refers to the HTML table field for DHCP static map creation/edition
+	DHCPStaticARP = "Static ARP"
+	// DHCPMAC refers to the HTML table field for DHCP static map creation/edition
+	DHCPMAC = "MAC address"
+	// DHCPIP refers to the HTML table field for DHCP static map creation/edition
+	DHCPIP = "IP address"
+	// DHCPHostname refers to the HTML table field for DHCP static map creation/edition
+	DHCPHostname = "Hostname"
+	// DHCPDescription refers to the HTML table field for DHCP static map creation/edition
+	DHCPDescription = "Description"
 )
 
 // DHCPStaticLeases abstract OPNSense DHCP Lease page
@@ -112,8 +128,8 @@ func (dhcp *DHCPStaticLeases) GetLeasePage() error {
 	return nil
 }
 
-// GetFields extracts the HTML page leases headers
-func (dhcp *DHCPStaticLeases) GetFields() {
+// GetLeasesFields extracts the HTML page leases headers
+func (dhcp *DHCPStaticLeases) GetLeasesFields() {
 	headers := htmlquery.FindOne(dhcp.Doc, "//tr[1]")
 	dhcp.Fields = []string{}
 	for child := headers.FirstChild; child != nil; child = child.NextSibling {
@@ -143,7 +159,7 @@ func (dhcp *DHCPStaticLeases) GetLeases() error {
 	}
 
 	// start by retrieving list of available fields
-	dhcp.GetFields()
+	dhcp.GetLeasesFields()
 
 	// count number of registered DHCP entries
 	nodes, err := htmlquery.QueryAll(dhcp.Doc, "//tr")
@@ -227,15 +243,18 @@ func (dhcp *DHCPStaticLeases) Apply(itf *DHCPInterface) error {
 	return nil
 }
 
-// CreateLease creates a new static lease
-func (dhcp *DHCPStaticLeases) CreateLease(lease *DHCPLease) error {
+// CreateEditLease creates or edit a static lease
+func (dhcp *DHCPStaticLeases) CreateEditLease(lease *DHCPLease, editID int) error {
 
 	itf := DHCPInterface{
 		Name: lease.Interface,
 	}
 
 	// get the edit page to retrieve form secret values
-	editURI := fmt.Sprintf("%s/services_dhcp_edit.php?if=%s#", dhcp.RootURI, itf.Name)
+	editURI := fmt.Sprintf("%s/services_dhcp_edit.php?if=%s", dhcp.RootURI, itf.Name)
+	if editID != -1 {
+		editURI = fmt.Sprintf("%s&id=%d", editURI, editID)
+	}
 	resp, err := dhcp.Session.Get(editURI)
 	if err != nil {
 		return err
@@ -262,6 +281,10 @@ func (dhcp *DHCPStaticLeases) CreateLease(lease *DHCPLease) error {
 		"Submit":     "Save",
 		"if":         lease.Interface,
 	}
+	if editID != -1 {
+		data["id"] = fmt.Sprintf("%d", editID)
+	}
+
 	resp, err = dhcp.Session.Post(editURI, data)
 	if err != nil {
 		return err
@@ -269,6 +292,125 @@ func (dhcp *DHCPStaticLeases) CreateLease(lease *DHCPLease) error {
 
 	// apply changes
 	err = dhcp.Apply(&itf)
+	if err != nil {
+		return err
+	}
+
+	return nil
+}
+
+// CreateLease creates a new static lease
+func (dhcp *DHCPStaticLeases) CreateLease(lease *DHCPLease) error {
+
+	err := dhcp.CreateEditLease(lease, -1)
+	if err != nil {
+		return err
+	}
+
+	return nil
+}
+
+// GetStaticFields extracts the HTML page leases headers for creation/edition
+func (dhcp *DHCPStaticLeases) GetStaticFields(itf *DHCPInterface, start int) []string {
+	q := fmt.Sprintf(`//table[@class="table table-striped"]//tr[%d]`, start)
+	headers := htmlquery.FindOne(itf.Doc, q)
+	fields := []string{}
+	for child := headers.FirstChild; child != nil; child = child.NextSibling {
+		if child.Type == html.ElementNode {
+			content := strings.TrimSpace(htmlquery.InnerText(child))
+			if len(content) > 0 {
+				fields = append(fields, content)
+			}
+		}
+	}
+
+	return fields
+}
+
+// GetStatic extracts a given DHCP map from OPNsense DHCP interface web page
+func (dhcp *DHCPStaticLeases) GetStatic(Doc *html.Node, fields []string, field string) string {
+	res := ""
+
+	// find the requested field index in HTML table
+	id := index(fields, field) + 1
+	if id == -1 {
+		return res
+	}
+
+	// XPath query to find the associated HTML node
+	q := fmt.Sprintf(`//td[%d]//text()`, id)
+	values, err := htmlquery.QueryAll(Doc, q)
+	if err != nil {
+		return res
+	}
+
+	// extract value
+	for _, v := range values {
+		if v.Type != html.TextNode {
+			continue
+		}
+		content := strings.TrimSpace(htmlquery.InnerText(v))
+		if field == DHCPMAC {
+			re := "([0-9a-f]{2}(?::[0-9a-f]{2}){5})"
+			matched, err := regexp.Match(re, []byte(content))
+			if err != nil || !matched {
+				continue
+			}
+		}
+		res = res + content
+	}
+
+	return res
+}
+
+// EditLease modifies an already existing static lease
+func (dhcp *DHCPStaticLeases) EditLease(orig, new *DHCPLease) error {
+
+	itf := DHCPInterface{
+		Name: orig.Interface,
+	}
+
+	// get the edit page to retrieve form secret values
+	dhcpURI := fmt.Sprintf("%s/services_dhcp.php?if=%s#", dhcp.RootURI, itf.Name)
+	resp, err := dhcp.Session.Get(dhcpURI)
+	if err != nil {
+		return err
+	}
+	page := strings.NewReader(resp.Text())
+	itf.Doc, err = htmlquery.Parse(page)
+	if err != nil {
+		return err
+	}
+
+	// lookup for static fields types
+	fields := dhcp.GetStaticFields(&itf, DHCPEntryStartingRow)
+
+	// XPath query to find the associated HTML node
+	q := fmt.Sprintf(`//table[@class="table table-striped"]//tr`)
+	rows, err := htmlquery.QueryAll(itf.Doc, q)
+	if err != nil {
+		return err
+	}
+
+	// retrieve all configured static DHCP maps
+	mapID := -1
+	for i := DHCPEntryStartingRow; i < len(rows); i++ {
+		mac := dhcp.GetStatic(rows[i], fields, DHCPMAC)
+		ip := dhcp.GetStatic(rows[i], fields, DHCPIP)
+		hostname := dhcp.GetStatic(rows[i], fields, DHCPHostname)
+
+		// ensure we find the right ID
+		if orig.MAC == mac && orig.IP == ip && orig.Hostname == hostname {
+			mapID = i - DHCPEntryStartingRow
+		}
+	}
+
+	if mapID == -1 {
+		return fmt.Errorf("invalid dhcp map ID")
+	}
+
+	// we finally got the ID, now we can edit
+	err = dhcp.CreateEditLease(new, mapID)
 	if err != nil {
 		return err
 	}

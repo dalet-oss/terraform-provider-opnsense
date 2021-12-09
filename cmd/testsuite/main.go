@@ -19,36 +19,60 @@ func read(dhcp *opnsense.DHCPStaticLeases, verbose bool) {
 	}
 }
 
-func create(dhcp *opnsense.DHCPStaticLeases) {
-	lease := opnsense.DHCPLease{
+func create(dhcp *opnsense.DHCPStaticLeases, lease *opnsense.DHCPLease) {
+	err := dhcp.CreateLease(lease)
+	if err != nil {
+		panic(err)
+	}
+}
+
+func edit(dhcp *opnsense.DHCPStaticLeases, orig, new *opnsense.DHCPLease) {
+	err := dhcp.EditLease(orig, new)
+	if err != nil {
+		panic(err)
+	}
+}
+
+func compare(dhcp *opnsense.DHCPStaticLeases, count, expect int, verbose bool) {
+	fmt.Printf("[R] Reading out DHCP leases ...\n")
+	read(dhcp, verbose)
+	c := len(dhcp.Leases)
+	fmt.Printf("[R] Found %d DHCP leases.\n", c)
+	if c == expect {
+		fmt.Printf("[R] We're good to go !\n")
+	} else {
+		fmt.Printf("[R] Something went wrong ;-(\n")
+	}
+}
+
+func dhcpTest(dhcp *opnsense.DHCPStaticLeases, verbose bool) {
+	origLease := opnsense.DHCPLease{
 		Interface: "opt3",
 		IP:        "10.69.0.99",
 		MAC:       "aa:bb:cc:dd:ee:ff",
 		Hostname:  "terraform",
 	}
 
-	err := dhcp.CreateLease(&lease)
-	if err != nil {
-		panic(err)
+	newLease := opnsense.DHCPLease{
+		Interface: "opt3",
+		IP:        "10.69.0.100",
+		MAC:       "aa:bb:cc:dd:ee:ff",
+		Hostname:  "terraform2",
 	}
-}
 
-func dhcpTest(dhcp *opnsense.DHCPStaticLeases, verbose bool) {
 	fmt.Printf("[R] Reading out DHCP leases ...\n")
 	read(dhcp, verbose)
 	count := len(dhcp.Leases)
 	fmt.Printf("[R] Found %d DHCP leases.\n", count)
+
 	fmt.Printf("[C] Creating new static DHCP lease ...\n")
-	create(dhcp)
-	fmt.Printf("[R] Reading out DHCP leases ...\n")
-	read(dhcp, verbose)
-	c := len(dhcp.Leases)
-	fmt.Printf("[R] Found %d DHCP leases.\n", c)
-	if c == (count + 1) {
-		fmt.Printf("[R] That's one more, we're good to go !\n")
-	} else {
-		fmt.Printf("[R] Something went wrong ;-(\n")
-	}
+	create(dhcp, &origLease)
+	compare(dhcp, count, count+1, verbose)
+
+	fmt.Printf("[U] Updating existing static DHCP lease ...\n")
+	edit(dhcp, &origLease, &newLease)
+	compare(dhcp, count, count+1, verbose)
+
 }
 
 func main() {
