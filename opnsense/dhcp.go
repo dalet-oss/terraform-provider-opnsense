@@ -363,6 +363,52 @@ func (dhcp *DHCPStaticLeases) GetStatic(Doc *html.Node, fields []string, field s
 	return res
 }
 
+// GetStaticMapID provides the HTML TR position ID for the requested static map
+func (dhcp *DHCPStaticLeases) GetStaticMapID(itf *DHCPInterface, lease *DHCPLease) (int, error) {
+
+	mapID := -1
+
+	// get the edit page to retrieve form secret values
+	dhcpURI := fmt.Sprintf("%s/services_dhcp.php?if=%s#", dhcp.RootURI, itf.Name)
+	resp, err := dhcp.Session.Get(dhcpURI)
+	if err != nil {
+		return mapID, err
+	}
+	page := strings.NewReader(resp.Text())
+	itf.Doc, err = htmlquery.Parse(page)
+	if err != nil {
+		return mapID, err
+	}
+
+	// lookup for static fields types
+	fields := dhcp.GetStaticFields(itf, DHCPEntryStartingRow)
+
+	// XPath query to find the associated HTML node
+	q := fmt.Sprintf(`//table[@class="table table-striped"]//tr`)
+	rows, err := htmlquery.QueryAll(itf.Doc, q)
+	if err != nil {
+		return mapID, err
+	}
+
+	// retrieve all configured static DHCP maps
+	for i := DHCPEntryStartingRow; i < len(rows); i++ {
+		mac := dhcp.GetStatic(rows[i], fields, DHCPMAC)
+		ip := dhcp.GetStatic(rows[i], fields, DHCPIP)
+		hostname := dhcp.GetStatic(rows[i], fields, DHCPHostname)
+
+		// ensure we find the right ID
+		if lease.MAC == mac && lease.IP == ip && lease.Hostname == hostname {
+			mapID = i - DHCPEntryStartingRow
+		}
+	}
+
+	if mapID == -1 {
+		return mapID, fmt.Errorf("invalid dhcp map ID")
+	}
+
+	return mapID, nil
+}
+
 // EditLease modifies an already existing static lease
 func (dhcp *DHCPStaticLeases) EditLease(orig, new *DHCPLease) error {
 
@@ -370,47 +416,51 @@ func (dhcp *DHCPStaticLeases) EditLease(orig, new *DHCPLease) error {
 		Name: orig.Interface,
 	}
 
-	// get the edit page to retrieve form secret values
-	dhcpURI := fmt.Sprintf("%s/services_dhcp.php?if=%s#", dhcp.RootURI, itf.Name)
-	resp, err := dhcp.Session.Get(dhcpURI)
+	// get lease map ID
+	mapID, err := dhcp.GetStaticMapID(&itf, orig)
 	if err != nil {
 		return err
-	}
-	page := strings.NewReader(resp.Text())
-	itf.Doc, err = htmlquery.Parse(page)
-	if err != nil {
-		return err
-	}
-
-	// lookup for static fields types
-	fields := dhcp.GetStaticFields(&itf, DHCPEntryStartingRow)
-
-	// XPath query to find the associated HTML node
-	q := fmt.Sprintf(`//table[@class="table table-striped"]//tr`)
-	rows, err := htmlquery.QueryAll(itf.Doc, q)
-	if err != nil {
-		return err
-	}
-
-	// retrieve all configured static DHCP maps
-	mapID := -1
-	for i := DHCPEntryStartingRow; i < len(rows); i++ {
-		mac := dhcp.GetStatic(rows[i], fields, DHCPMAC)
-		ip := dhcp.GetStatic(rows[i], fields, DHCPIP)
-		hostname := dhcp.GetStatic(rows[i], fields, DHCPHostname)
-
-		// ensure we find the right ID
-		if orig.MAC == mac && orig.IP == ip && orig.Hostname == hostname {
-			mapID = i - DHCPEntryStartingRow
-		}
-	}
-
-	if mapID == -1 {
-		return fmt.Errorf("invalid dhcp map ID")
 	}
 
 	// we finally got the ID, now we can edit
 	err = dhcp.CreateEditLease(new, mapID)
+	if err != nil {
+		return err
+	}
+
+	return nil
+}
+
+// DeleteLease destroy an existing static lease
+func (dhcp *DHCPStaticLeases) DeleteLease(lease *DHCPLease) error {
+
+	itf := DHCPInterface{
+		Name: lease.Interface,
+	}
+
+	// get lease map ID
+	mapID, err := dhcp.GetStaticMapID(&itf, lease)
+	if err != nil {
+		return err
+	}
+
+	// get the edit page to retrieve form secret values
+	dhcpURI := fmt.Sprintf("%s/services_dhcp.php?if=%s", dhcp.RootURI, itf.Name)
+
+	// destroy DHCP entry
+	data := requests.Datas{
+		"if":  lease.Interface,
+		"id":  fmt.Sprintf("%d", mapID),
+		"act": "del",
+	}
+
+	_, err = dhcp.Session.Post(dhcpURI, data)
+	if err != nil {
+		return err
+	}
+
+	// apply changes
+	err = dhcp.Apply(&itf)
 	if err != nil {
 		return err
 	}

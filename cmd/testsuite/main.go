@@ -33,6 +33,13 @@ func edit(dhcp *opnsense.DHCPStaticLeases, orig, new *opnsense.DHCPLease) {
 	}
 }
 
+func delete(dhcp *opnsense.DHCPStaticLeases, lease *opnsense.DHCPLease) {
+	err := dhcp.DeleteLease(lease)
+	if err != nil {
+		panic(err)
+	}
+}
+
 func compare(dhcp *opnsense.DHCPStaticLeases, count, expect int, verbose bool) {
 	fmt.Printf("[R] Reading out DHCP leases ...\n")
 	read(dhcp, verbose)
@@ -73,6 +80,9 @@ func dhcpTest(dhcp *opnsense.DHCPStaticLeases, verbose bool) {
 	edit(dhcp, &origLease, &newLease)
 	compare(dhcp, count, count+1, verbose)
 
+	fmt.Printf("[D] Deleting existing static DHCP lease ...\n")
+	delete(dhcp, &newLease)
+	compare(dhcp, count, count, verbose)
 }
 
 func main() {
