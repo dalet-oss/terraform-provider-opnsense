@@ -393,11 +393,9 @@ func (dhcp *DHCPStaticLeases) GetStaticMapID(itf *DHCPInterface, lease *DHCPLeas
 	// retrieve all configured static DHCP maps
 	for i := DHCPEntryStartingRow; i < len(rows); i++ {
 		mac := dhcp.GetStatic(rows[i], fields, DHCPMAC)
-		ip := dhcp.GetStatic(rows[i], fields, DHCPIP)
-		hostname := dhcp.GetStatic(rows[i], fields, DHCPHostname)
 
 		// ensure we find the right ID
-		if lease.MAC == mac && lease.IP == ip && lease.Hostname == hostname {
+		if lease.MAC == mac {
 			mapID = i - DHCPEntryStartingRow
 		}
 	}
