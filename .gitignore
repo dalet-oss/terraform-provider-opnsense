@@ -1,2 +1,2 @@
-terraform-provider-opnsense
-main.go
+./terraform-provider-opnsense
+./testsuite
