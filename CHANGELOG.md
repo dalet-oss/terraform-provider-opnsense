@@ -1,3 +1,8 @@
+## 0.2.0 (December 10th, 2021)
+
+* major code refactoring
+* uses per-interface page instead of global leases one
+
 ## 0.1.0 (December 9th, 2021)
 
 * initial release
