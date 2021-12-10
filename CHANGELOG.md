@@ -1,3 +1,7 @@
+## 0.2.1 (December 10th, 2021)
+
+* ignore case when comparing MAC identifiers
+
 ## 0.2.0 (December 10th, 2021)
 
 * major code refactoring
