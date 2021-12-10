@@ -14,27 +14,6 @@ import (
 const DHCPEntryStartingRow = 2
 
 const (
-	// DHCPFieldInterface refers to the HTML table field name for DHCP interface description
-	DHCPFieldInterface = "Interface"
-	// DHCPFieldIP refers to the HTML table field name for DHCP IP address description
-	DHCPFieldIP = "IP address"
-	// DHCPFieldMAC refers to the HTML table field name for DHCP MAc address description
-	DHCPFieldMAC = "MAC address"
-	// DHCPFieldHostname refers to the HTML table field name for DHCP hostname description
-	DHCPFieldHostname = "Hostname"
-	// DHCPFieldDescription refers to the HTML table field name for DHCP description
-	DHCPFieldDescription = "Description"
-	// DHCPFieldStart refers to the HTML table field name for DHCP lease start time description
-	DHCPFieldStart = "Start"
-	// DHCPFieldEnd refers to the HTML table field name for DHCP lease end time description
-	DHCPFieldEnd = "End"
-	// DHCPFieldStatus refers to the HTML table field name for DHCP lease status description
-	DHCPFieldStatus = "Status"
-	// DHCPFieldLease refers to the HTML table field name for DHCP lease type description
-	DHCPFieldLease = "Lease type"
-)
-
-const (
 	// DHCPStaticARP refers to the HTML table field for DHCP static map creation/edition
 	DHCPStaticARP = "Static ARP"
 	// DHCPMAC refers to the HTML table field for DHCP static map creation/edition
@@ -47,52 +26,64 @@ const (
 	DHCPDescription = "Description"
 )
 
-// DHCPStaticLeases abstract OPNSense DHCP Lease page
-type DHCPStaticLeases struct {
+const (
+	// DHCPServiceURI is the WebUI service URI
+	DHCPServiceURI = "/services_dhcp.php"
+	// DHCPServiceEditURI is the WebUI service edit URI
+	DHCPServiceEditURI = "/services_dhcp_edit.php"
+)
+
+const (
+	// ErrNoMappings is thrown when no mapping can be found
+	ErrNoMappings = "unable to retrieve list of static mappings"
+	// ErrMACExists is thrown when a mapping already exists for this MAC address
+	ErrMACExists = "mapping for this MAC already exists"
+	// ErrNoSuchMAC is thrown if no mapping can be found for the specific Interface/MAC couple
+	ErrNoSuchMAC = "mapping doesn't exists for this MAC address"
+)
+
+// DHCPSession abstracts OPNSense DHCP Interface
+type DHCPSession struct {
 	RootURI string
 	Session *requests.Request
 	Cookies []*http.Cookie
 	CSRF    string
-	Doc     *html.Node
 	Fields  []string
-	Leases  []DHCPLease
 }
 
-// DHCPLease abstract a given lease
-type DHCPLease struct {
+// StaticMapping abstracts a static DHCP mapping entry
+type StaticMapping struct {
+	ID        int
 	Interface string
 	IP        string
 	MAC       string
 	Hostname  string
 }
 
-// DHCPInterface abstracts a network interface
-type DHCPInterface struct {
-	Name      string
-	FormName  string
-	FormValue string
-	Doc       *html.Node
+// Error throws custom errors
+func (s *DHCPSession) Error(err string) error {
+	return fmt.Errorf(err)
 }
 
 // Authenticate allows authentication to OPNsense DHCP lease web page
-func (dhcp *DHCPStaticLeases) Authenticate(rootURI, user, password string) error {
+func (s *DHCPSession) Authenticate(rootURI, user, password string) error {
 
-	dhcp.RootURI = rootURI
-	dhcp.Session = requests.Requests()
+	s.RootURI = rootURI
+	s.Session = requests.Requests()
 
 	// do a basic query
-	resp, err := dhcp.Session.Get(dhcp.RootURI)
+	resp, err := s.Session.Get(s.RootURI)
 	if err != nil {
 		return err
 	}
 
 	// fetch up cookies
-	dhcp.Cookies = resp.Cookies()
+	s.Cookies = resp.Cookies()
 
 	// read CSRF token
 	re := regexp.MustCompile(`"X-CSRFToken", "(.*)" \);`)
 	csrf := re.FindSubmatch([]byte(resp.Text()))
-	dhcp.CSRF = string(csrf[1])
+	s.CSRF = string(csrf[1])
 
 	// re-try with authentication
 	data := requests.Datas{
@@ -100,8 +91,8 @@ func (dhcp *DHCPStaticLeases) Authenticate(rootURI, user, password string) error
 		"usernamefld": user,
 		"passwordfld": password,
 	}
-	dhcp.Session.Header.Set("X-CSRFToken", dhcp.CSRF)
-	resp, err = dhcp.Session.Post(dhcp.RootURI, data)
+	s.Session.Header.Set("X-CSRFToken", s.CSRF)
+	resp, err = s.Session.Post(s.RootURI, data)
 	if err != nil {
 		return err
 	}
@@ -109,237 +100,47 @@ func (dhcp *DHCPStaticLeases) Authenticate(rootURI, user, password string) error
 	return nil
 }
 
-// GetLeasePage renders the OPNsense DHCP lease web page
-func (dhcp *DHCPStaticLeases) GetLeasePage() error {
-
-	getURI := fmt.Sprintf("%s/status_dhcp_leases.php", dhcp.RootURI)
-	resp, err := dhcp.Session.Get(getURI)
-	if err != nil {
-		return err
-	}
-
-	// parse HTML
-	page := strings.NewReader(resp.Text())
-	dhcp.Doc, err = htmlquery.Parse(page)
-	if err != nil {
-		return err
-	}
-
-	return nil
-}
-
-// GetLeasesFields extracts the HTML page leases headers
-func (dhcp *DHCPStaticLeases) GetLeasesFields() {
-	headers := htmlquery.FindOne(dhcp.Doc, "//tr[1]")
-	dhcp.Fields = []string{}
-	for child := headers.FirstChild; child != nil; child = child.NextSibling {
-		if child.Type == html.ElementNode {
-			content := htmlquery.InnerText(child)
-			if len(content) > 0 {
-				dhcp.Fields = append(dhcp.Fields, content)
-			}
-		}
-	}
-}
-
-// PrintLeases displays all configured leases
-func (dhcp *DHCPStaticLeases) PrintLeases() {
-	for i, l := range dhcp.Leases {
-		fmt.Printf("Lease #%.2d: %s (%s) reserved for %s on %s\n", i, l.Hostname, l.IP, l.MAC, l.Interface)
-	}
-}
-
-// GetLeases extracts all DHCP leases from OPNsense DHCP lease web page
-func (dhcp *DHCPStaticLeases) GetLeases() error {
-
-	// Get Leases page
-	err := dhcp.GetLeasePage()
-	if err != nil {
-		panic(err)
-	}
-
-	// start by retrieving list of available fields
-	dhcp.GetLeasesFields()
-
-	// count number of registered DHCP entries
-	nodes, err := htmlquery.QueryAll(dhcp.Doc, "//tr")
-	if err != nil {
-		return err
-	}
-	entries := len(nodes)
-
-	// clean-up any previous leases
-	dhcp.Leases = nil
-
-	// retrieve all configured static DHCP leases
-	for i := 1; i < entries; i++ {
-		lease := DHCPLease{}
-		lease.Interface = dhcp.Get(i, DHCPFieldInterface)
-		lease.IP = dhcp.Get(i, DHCPFieldIP)
-		lease.MAC = dhcp.Get(i, DHCPFieldMAC)
-		lease.Hostname = dhcp.Get(i, DHCPFieldHostname)
-		dhcp.Leases = append(dhcp.Leases, lease)
-	}
-
-	return nil
-}
-
-// Get extracts a given DHCP lease from OPNsense DHCP lease web page
-func (dhcp *DHCPStaticLeases) Get(idx int, field string) string {
-	res := ""
-
-	// find the requested field index in HTML table
-	id := index(dhcp.Fields, field) + 1
-	if id == -1 {
-		return res
-	}
-
-	// XPath query to find the associated HTML node
-	q := fmt.Sprintf(`//table[@class="table table-striped"]//tbody//tr[%d]//td[%d]//text()`, idx, id)
-	values, err := htmlquery.QueryAll(dhcp.Doc, q)
-	if err != nil {
-		return res
-	}
-
-	// extract value
-	for _, v := range values {
-		if v.Type != html.TextNode {
-			continue
-		}
-		content := htmlquery.InnerText(v)
-		if field == DHCPFieldMAC {
-			re := "([0-9a-f]{2}(?::[0-9a-f]{2}){5})"
-			matched, err := regexp.Match(re, []byte(content))
-			if err != nil || !matched {
-				continue
-			}
-			content = strings.TrimSpace(content)
-		}
-		if field == DHCPFieldHostname {
-			if content == "" {
-				content = "default"
-			}
-		}
-		res = res + content
-	}
-
-	return res
-}
-
-// Apply validates the configuration for a given interface and reload DHCP server
-func (dhcp *DHCPStaticLeases) Apply(itf *DHCPInterface) error {
-	// apply changes
-	data := requests.Datas{
-		itf.FormName: itf.FormValue,
-		"apply":      "Apply changes",
-		"if":         itf.Name,
-	}
-
-	applyURI := fmt.Sprintf("%s/services_dhcp.php?if=%s#", dhcp.RootURI, itf.Name)
-	_, err := dhcp.Session.Post(applyURI, data)
-	if err != nil {
-		return err
+// IsAuthenticated throws an error if no session has been initialized
+func (s *DHCPSession) IsAuthenticated() error {
+	if s.CSRF == "" {
+		return fmt.Errorf("can't establish a session to OPNSense")
 	}
 	return nil
 }
 
-// CreateEditLease creates or edit a static lease
-func (dhcp *DHCPStaticLeases) CreateEditLease(lease *DHCPLease, editID int) error {
-
-	itf := DHCPInterface{
-		Name: lease.Interface,
+// GetStaticFieldNames extracts the HTML page leases headers for creation/edition
+func (s *DHCPSession) GetStaticFieldNames(node *html.Node, start int) {
+	if len(s.Fields) > 0 {
+		// already filled-in, no need to go any further
+		return
 	}
 
-	// get the edit page to retrieve form secret values
-	editURI := fmt.Sprintf("%s/services_dhcp_edit.php?if=%s", dhcp.RootURI, itf.Name)
-	if editID != -1 {
-		editURI = fmt.Sprintf("%s&id=%d", editURI, editID)
-	}
-	resp, err := dhcp.Session.Get(editURI)
-	if err != nil {
-		return err
-	}
-	page := strings.NewReader(resp.Text())
-	itf.Doc, err = htmlquery.Parse(page)
-	if err != nil {
-		return err
-	}
-
-	q := fmt.Sprintf(`//div[@class="content-box"]//form//input`)
-	n := htmlquery.FindOne(itf.Doc, q)
-	itf.FormName = htmlquery.SelectAttr(n, "name")
-	itf.FormValue = htmlquery.SelectAttr(n, "value")
-
-	// create a new DHCP entry
-	data := requests.Datas{
-		itf.FormName: itf.FormValue,
-		"mac":        lease.MAC,
-		"cid":        lease.Hostname,
-		"ipaddr":     lease.IP,
-		"hostname":   lease.Hostname,
-		"descr":      lease.Hostname,
-		"Submit":     "Save",
-		"if":         lease.Interface,
-	}
-	if editID != -1 {
-		data["id"] = fmt.Sprintf("%d", editID)
-	}
-
-	resp, err = dhcp.Session.Post(editURI, data)
-	if err != nil {
-		return err
-	}
-
-	// apply changes
-	err = dhcp.Apply(&itf)
-	if err != nil {
-		return err
-	}
-
-	return nil
-}
-
-// CreateLease creates a new static lease
-func (dhcp *DHCPStaticLeases) CreateLease(lease *DHCPLease) error {
-
-	err := dhcp.CreateEditLease(lease, -1)
-	if err != nil {
-		return err
-	}
-
-	return nil
-}
-
-// GetStaticFields extracts the HTML page leases headers for creation/edition
-func (dhcp *DHCPStaticLeases) GetStaticFields(itf *DHCPInterface, start int) []string {
 	q := fmt.Sprintf(`//table[@class="table table-striped"]//tr[%d]`, start)
-	headers := htmlquery.FindOne(itf.Doc, q)
-	fields := []string{}
+	headers := htmlquery.FindOne(node, q)
+	s.Fields = []string{}
 	for child := headers.FirstChild; child != nil; child = child.NextSibling {
 		if child.Type == html.ElementNode {
 			content := strings.TrimSpace(htmlquery.InnerText(child))
 			if len(content) > 0 {
-				fields = append(fields, content)
+				s.Fields = append(s.Fields, content)
 			}
 		}
 	}
-
-	return fields
 }
 
-// GetStatic extracts a given DHCP map from OPNsense DHCP interface web page
-func (dhcp *DHCPStaticLeases) GetStatic(Doc *html.Node, fields []string, field string) string {
+// GetStaticMappingField extracts a given DHCP mapping from OPNsense DHCP interface web page
+func (s *DHCPSession) GetStaticMappingField(node *html.Node, f string) string {
 	res := ""
 
 	// find the requested field index in HTML table
-	id := index(fields, field) + 1
+	id := index(s.Fields, f) + 1
 	if id == -1 {
 		return res
 	}
 
 	// XPath query to find the associated HTML node
 	q := fmt.Sprintf(`//td[%d]//text()`, id)
-	values, err := htmlquery.QueryAll(Doc, q)
+	values, err := htmlquery.QueryAll(node, q)
 	if err != nil {
 		return res
 	}
@@ -350,11 +151,16 @@ func (dhcp *DHCPStaticLeases) GetStatic(Doc *html.Node, fields []string, field s
 			continue
 		}
 		content := strings.TrimSpace(htmlquery.InnerText(v))
-		if field == DHCPMAC {
+		if f == DHCPMAC {
 			re := "([0-9a-f]{2}(?::[0-9a-f]{2}){5})"
 			matched, err := regexp.Match(re, []byte(content))
 			if err != nil || !matched {
 				continue
+			}
+		}
+		if f == DHCPHostname {
+			if content == "" {
+				content = "default"
 			}
 		}
 		res = res + content
@@ -363,65 +169,124 @@ func (dhcp *DHCPStaticLeases) GetStatic(Doc *html.Node, fields []string, field s
 	return res
 }
 
-// GetStaticMapID provides the HTML TR position ID for the requested static map
-func (dhcp *DHCPStaticLeases) GetStaticMapID(itf *DHCPInterface, lease *DHCPLease) (int, error) {
+// GetAllInterfaceStaticMappings retrieves the list of all configured static mappings for a given interface
+func (s *DHCPSession) GetAllInterfaceStaticMappings(iface string) ([]StaticMapping, error) {
 
-	mapID := -1
+	entries := []StaticMapping{}
 
-	// get the edit page to retrieve form secret values
-	dhcpURI := fmt.Sprintf("%s/services_dhcp.php?if=%s#", dhcp.RootURI, itf.Name)
-	resp, err := dhcp.Session.Get(dhcpURI)
+	// check for proper authentication
+	err := s.IsAuthenticated()
 	if err != nil {
-		return mapID, err
+		return entries, err
 	}
-	page := strings.NewReader(resp.Text())
-	itf.Doc, err = htmlquery.Parse(page)
+
+	// read out the service page
+	dhcpURI := fmt.Sprintf("%s%s?if=%s", s.RootURI, DHCPServiceURI, iface)
+	resp, err := s.Session.Get(dhcpURI)
 	if err != nil {
-		return mapID, err
+		return entries, err
+	}
+
+	// get HTML
+	page := strings.NewReader(resp.Text())
+	doc, err := htmlquery.Parse(page)
+	if err != nil {
+		return entries, err
 	}
 
 	// lookup for static fields types
-	fields := dhcp.GetStaticFields(itf, DHCPEntryStartingRow)
+	s.GetStaticFieldNames(doc, DHCPEntryStartingRow)
 
-	// XPath query to find the associated HTML node
+	// XPath query to find all table rows
 	q := fmt.Sprintf(`//table[@class="table table-striped"]//tr`)
-	rows, err := htmlquery.QueryAll(itf.Doc, q)
+	rows, err := htmlquery.QueryAll(doc, q)
 	if err != nil {
-		return mapID, err
+		return entries, err
 	}
 
-	// retrieve all configured static DHCP maps
+	// retrieve all configured static DHCP mappings
 	for i := DHCPEntryStartingRow; i < len(rows); i++ {
-		mac := dhcp.GetStatic(rows[i], fields, DHCPMAC)
-
-		// ensure we find the right ID
-		if lease.MAC == mac {
-			mapID = i - DHCPEntryStartingRow
+		r := rows[i]
+		m := StaticMapping{
+			ID:        i - DHCPEntryStartingRow,
+			Interface: iface,
+			IP:        s.GetStaticMappingField(r, DHCPIP),
+			MAC:       s.GetStaticMappingField(r, DHCPMAC),
+			Hostname:  s.GetStaticMappingField(r, DHCPHostname),
 		}
+		entries = append(entries, m)
 	}
 
-	if mapID == -1 {
-		return mapID, fmt.Errorf("invalid dhcp map ID")
-	}
-
-	return mapID, nil
+	return entries, nil
 }
 
-// EditLease modifies an already existing static lease
-func (dhcp *DHCPStaticLeases) EditLease(orig, new *DHCPLease) error {
-
-	itf := DHCPInterface{
-		Name: orig.Interface,
+// Apply validates the configuration for a given interface and reload DHCP server
+func (s *DHCPSession) Apply(iface, formName, formValue string) error {
+	// apply changes
+	data := requests.Datas{
+		"apply": "Apply changes",
+		"if":    iface,
+	}
+	if formName != "" || formValue != "" {
+		data[formName] = formValue
 	}
 
-	// get lease map ID
-	mapID, err := dhcp.GetStaticMapID(&itf, orig)
+	applyURI := fmt.Sprintf("%s%s?if=%s", s.RootURI, DHCPServiceURI, iface)
+	_, err := s.Session.Post(applyURI, data)
+	if err != nil {
+		return err
+	}
+	return nil
+}
+
+// CreateOrEdit creates or edit a static mapping
+func (s *DHCPSession) CreateOrEdit(m *StaticMapping) error {
+
+	// get the edit page to retrieve form secret values
+	editURI := fmt.Sprintf("%s%s?if=%s", s.RootURI, DHCPServiceEditURI, m.Interface)
+	if m.ID != -1 {
+		editURI = fmt.Sprintf("%s&id=%d", editURI, m.ID)
+	}
+	resp, err := s.Session.Get(editURI)
 	if err != nil {
 		return err
 	}
 
-	// we finally got the ID, now we can edit
-	err = dhcp.CreateEditLease(new, mapID)
+	// get HTML
+	page := strings.NewReader(resp.Text())
+	doc, err := htmlquery.Parse(page)
+	if err != nil {
+		return err
+	}
+
+	// get form runtime values
+	q := fmt.Sprintf(`//div[@class="content-box"]//form//input`)
+	n := htmlquery.FindOne(doc, q)
+	formName := htmlquery.SelectAttr(n, "name")
+	formValue := htmlquery.SelectAttr(n, "value")
+
+	// create a new DHCP entry
+	data := requests.Datas{
+		formName:   formValue,
+		"mac":      m.MAC,
+		"cid":      m.Hostname,
+		"ipaddr":   m.IP,
+		"hostname": m.Hostname,
+		"descr":    m.Hostname,
+		"Submit":   "Save",
+		"if":       m.Interface,
+	}
+	if m.ID != -1 {
+		data["id"] = fmt.Sprintf("%d", m.ID)
+	}
+
+	resp, err = s.Session.Post(editURI, data)
+	if err != nil {
+		return err
+	}
+
+	// apply changes
+	err = s.Apply(m.Interface, formName, formValue)
 	if err != nil {
 		return err
 	}
@@ -429,36 +294,108 @@ func (dhcp *DHCPStaticLeases) EditLease(orig, new *DHCPLease) error {
 	return nil
 }
 
-// DeleteLease destroy an existing static lease
-func (dhcp *DHCPStaticLeases) DeleteLease(lease *DHCPLease) error {
+// FindMappingByMAC retrieves all entries for a given interface and select the one that matches
+func (s *DHCPSession) FindMappingByMAC(m *StaticMapping) (*StaticMapping, error) {
 
-	itf := DHCPInterface{
-		Name: lease.Interface,
+	// retrieves existing mappings
+	entries, err := s.GetAllInterfaceStaticMappings(m.Interface)
+	if err != nil {
+		return nil, err
 	}
 
-	// get lease map ID
-	mapID, err := dhcp.GetStaticMapID(&itf, lease)
+	// check if an entry existing for this MAC
+	for _, e := range entries {
+		// we found it
+		if e.MAC == m.MAC {
+			return &e, nil
+		}
+	}
+
+	return nil, s.Error(ErrNoSuchMAC)
+}
+
+// CreateStaticMapping creates a new static lease
+func (s *DHCPSession) CreateStaticMapping(m *StaticMapping) error {
+
+	e, err := s.FindMappingByMAC(m)
+
+	// check if the MAC address is not already registered
+	if e != nil {
+		return s.Error(ErrMACExists)
+	}
+
+	// create the mapping entry
+	m.ID = -1
+	err = s.CreateOrEdit(m)
 	if err != nil {
 		return err
 	}
 
+	return nil
+}
+
+// ReadStaticMapping retrieves mapping information for a specified Interface/MAC couple
+func (s *DHCPSession) ReadStaticMapping(m *StaticMapping) error {
+
+	// check if an entry existing for this Interface/MAC couple
+	e, err := s.FindMappingByMAC(m)
+	if e == nil {
+		return err
+	}
+
+	// assign values accordingly
+	m.ID = e.ID
+	m.IP = e.IP
+	m.Hostname = e.Hostname
+
+	return nil
+}
+
+// UpdateStaticMapping modifies an already existing static mapping
+func (s *DHCPSession) UpdateStaticMapping(m *StaticMapping) error {
+
+	// check if an entry existing for this Interface/MAC couple
+	e, err := s.FindMappingByMAC(m)
+	if e == nil {
+		return err
+	}
+
+	// update the mapping entry
+	m.ID = e.ID
+	err = s.CreateOrEdit(m)
+	if err != nil {
+		return err
+	}
+
+	return nil
+}
+
+// DeleteStaticMapping destroy an existing static mapping
+func (s *DHCPSession) DeleteStaticMapping(m *StaticMapping) error {
+
+	// check if an entry existing for this Interface/MAC couple
+	e, err := s.FindMappingByMAC(m)
+	if e == nil {
+		return err
+	}
+
 	// get the edit page to retrieve form secret values
-	dhcpURI := fmt.Sprintf("%s/services_dhcp.php?if=%s", dhcp.RootURI, itf.Name)
+	dhcpURI := fmt.Sprintf("%s%s?if=%s", s.RootURI, DHCPServiceURI, e.Interface)
 
 	// destroy DHCP entry
 	data := requests.Datas{
-		"if":  lease.Interface,
-		"id":  fmt.Sprintf("%d", mapID),
+		"if":  e.Interface,
+		"id":  fmt.Sprintf("%d", e.ID),
 		"act": "del",
 	}
 
-	_, err = dhcp.Session.Post(dhcpURI, data)
+	_, err = s.Session.Post(dhcpURI, data)
 	if err != nil {
 		return err
 	}
 
 	// apply changes
-	err = dhcp.Apply(&itf)
+	err = s.Apply(e.Interface, "", "")
 	if err != nil {
 		return err
 	}

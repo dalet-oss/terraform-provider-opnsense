@@ -11,7 +11,7 @@ import (
 
 // ProviderConfiguration struct for opnsense-provider
 type ProviderConfiguration struct {
-	DHCP  *DHCPStaticLeases
+	DHCP  *DHCPSession
 	Mutex *sync.Mutex
 	Cond  *sync.Cond
 }
@@ -63,7 +63,7 @@ func providerConfigure(d *schema.ResourceData) (interface{}, error) {
 	}
 
 	var mut sync.Mutex
-	var dhcp DHCPStaticLeases
+	var dhcp DHCPSession
 	var provider = ProviderConfiguration{
 		DHCP:  &dhcp,
 		Mutex: &mut,

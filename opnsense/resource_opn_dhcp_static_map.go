@@ -57,7 +57,7 @@ func resourceOpnDHCPStaticMap() *schema.Resource {
 
 var rxRsID = regexp.MustCompile("([^/]+)/([^/]+)")
 
-func parseDhcpResourceID(resID string) (itf string, mac string, err error) {
+func parseDhcpResourceID(resID string) (string, string, error) {
 	if !rxRsID.MatchString(resID) {
 		return "", "", fmt.Errorf("invalid resource format: %s. must be interface/mac", resID)
 	}
@@ -76,31 +76,17 @@ func resourceDhcpStaticMappingCreate(d *schema.ResourceData, meta interface{}) e
 
 	lock.Lock()
 
-	err := dhcp.GetLeases()
-	if err != nil {
-		lock.Unlock()
-		return fmt.Errorf("unable to retrieve configured DHCP leases")
-	}
-
-	// check if MAC address is not already registered
+	// create a new static mapping
+	iface := d.Get(KeyInterface).(string)
 	mac := d.Get(KeyMAC).(string)
-	for _, l := range dhcp.Leases {
-		if l.MAC == mac {
-			lock.Unlock()
-			return fmt.Errorf("mapping for this MAC already exists")
-		}
-	}
-
-	// create a new lease
-	itf := d.Get(KeyInterface).(string)
-	lease := DHCPLease{
-		Interface: itf,
+	m := StaticMapping{
+		Interface: iface,
 		IP:        d.Get(KeyIP).(string),
 		MAC:       mac,
 		Hostname:  d.Get(KeyName).(string),
 	}
 
-	err = dhcp.CreateLease(&lease)
+	err := dhcp.CreateStaticMapping(&m)
 	if err != nil {
 		lock.Unlock()
 		return err
@@ -109,7 +95,7 @@ func resourceDhcpStaticMappingCreate(d *schema.ResourceData, meta interface{}) e
 	time.Sleep(100 * time.Millisecond)
 
 	// set resource ID accordingly
-	d.SetId(dhcpResourceID(itf, mac))
+	d.SetId(dhcpResourceID(iface, mac))
 
 	// read out resource again
 	lock.Unlock()
@@ -126,50 +112,32 @@ func resourceDhcpStaticMappingRead(d *schema.ResourceData, meta interface{}) err
 	lock.Lock()
 	defer lock.Unlock()
 
-	itf, mac, err := parseDhcpResourceID(d.Id())
+	iface, mac, err := parseDhcpResourceID(d.Id())
 	if err != nil {
 		d.SetId("")
 		return err
 	}
 
-	// fetch leases
-	err = dhcp.GetLeases()
-	if err != nil {
-		return fmt.Errorf("unable to retrieve configured DHCP leases")
+	m := StaticMapping{
+		Interface: iface,
+		MAC:       mac,
 	}
 
-	// check if MAC address exists
-	found := 0
-	var lease *DHCPLease
-	for _, l := range dhcp.Leases {
-		if l.MAC == mac {
-			found = 1
-			lease = &l
-			break
-		}
-	}
-	if found == 0 {
-		return fmt.Errorf("mapping for this ID do not exists (id: %s)", d.Id())
+	// read out DHCP information
+	err = dhcp.ReadStaticMapping(&m)
+	if err != nil {
+		d.SetId("")
+		return err
 	}
 
-	d.SetId(dhcpResourceID(itf, lease.MAC))
+	// set Terraform resource ID
+	d.SetId(dhcpResourceID(iface, m.MAC))
 
-	err = d.Set(KeyInterface, lease.Interface)
-	if err != nil {
-		return err
-	}
-	err = d.Set(KeyIP, lease.IP)
-	if err != nil {
-		return err
-	}
-	err = d.Set(KeyName, lease.Hostname)
-	if err != nil {
-		return err
-	}
-	err = d.Set(KeyMAC, lease.MAC)
-	if err != nil {
-		return err
-	}
+	// set object params
+	d.Set(KeyInterface, m.Interface)
+	d.Set(KeyIP, m.IP)
+	d.Set(KeyName, m.Hostname)
+	d.Set(KeyMAC, m.MAC)
 
 	return nil
 }
@@ -182,38 +150,19 @@ func resourceDhcpStaticMappingDelete(d *schema.ResourceData, meta interface{}) e
 	lock.Lock()
 	defer lock.Unlock()
 
-	itf, mac, err := parseDhcpResourceID(d.Id())
+	iface, mac, err := parseDhcpResourceID(d.Id())
 	if err != nil {
 		d.SetId("")
 		return err
 	}
 
-	err = dhcp.GetLeases()
-	if err != nil {
-		return fmt.Errorf("unable to retrieve configured DHCP leases")
-	}
-
-	// check if MAC address exists
-	found := 0
-	for _, l := range dhcp.Leases {
-		if l.MAC == mac {
-			found = 1
-			break
-		}
-	}
-	if found == 0 {
-		return fmt.Errorf("mapping for this ID do not exists (id: %s)", d.Id())
-	}
-
-	// delete an existing lease
-	lease := DHCPLease{
-		Interface: itf,
-		IP:        d.Get(KeyIP).(string),
+	// delete an existing mapping
+	m := StaticMapping{
+		Interface: iface,
 		MAC:       mac,
-		Hostname:  d.Get(KeyName).(string),
 	}
 
-	err = dhcp.DeleteLease(&lease)
+	err = dhcp.DeleteStaticMapping(&m)
 	if err != nil {
 		return err
 	}
@@ -229,44 +178,21 @@ func resourceDhcpStaticMappingUpdate(d *schema.ResourceData, meta interface{}) e
 	lock.Lock()
 	defer lock.Unlock()
 
-	itf, mac, err := parseDhcpResourceID(d.Id())
+	iface, mac, err := parseDhcpResourceID(d.Id())
 	if err != nil {
 		d.SetId("")
 		return err
 	}
 
-	err = dhcp.GetLeases()
-	if err != nil {
-		return fmt.Errorf("unable to retrieve configured DHCP leases")
-	}
-
-	// check if MAC address exists
-	found := 0
-	for _, l := range dhcp.Leases {
-		if l.MAC == mac {
-			found = 1
-			break
-		}
-	}
-	if found == 0 {
-		return fmt.Errorf("mapping for this ID do not exists (id: %s)", d.Id())
-	}
-
-	// define old lease
-	oldLease := DHCPLease{
-		Interface: itf,
-		MAC:       mac,
-	}
-
-	// define new lease
-	newLease := DHCPLease{
-		Interface: itf,
+	// updated mapping
+	m := StaticMapping{
+		Interface: iface,
 		IP:        d.Get(KeyIP).(string),
 		MAC:       mac,
 		Hostname:  d.Get(KeyName).(string),
 	}
 
-	err = dhcp.EditLease(&oldLease, &newLease)
+	err = dhcp.UpdateStaticMapping(&m)
 	if err != nil {
 		return err
 	}
