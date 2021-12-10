@@ -306,7 +306,7 @@ func (s *DHCPSession) FindMappingByMAC(m *StaticMapping) (*StaticMapping, error)
 	// check if an entry existing for this MAC
 	for _, e := range entries {
 		// we found it
-		if e.MAC == m.MAC {
+		if strings.EqualFold(e.MAC, m.MAC) {
 			return &e, nil
 		}
 	}
