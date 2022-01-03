@@ -5,7 +5,6 @@ import (
 	"github.com/antchfx/htmlquery"
 	"github.com/asmcos/requests"
 	"golang.org/x/net/html"
-	"net/http"
 	"regexp"
 	"strings"
 )
@@ -44,11 +43,8 @@ const (
 
 // DHCPSession abstracts OPNSense DHCP Interface
 type DHCPSession struct {
-	RootURI string
-	Session *requests.Request
-	Cookies []*http.Cookie
-	CSRF    string
-	Fields  []string
+	OPN    *OPNSession
+	Fields []string
 }
 
 // StaticMapping abstracts a static DHCP mapping entry
@@ -58,54 +54,6 @@ type StaticMapping struct {
 	IP        string
 	MAC       string
 	Hostname  string
-}
-
-// Error throws custom errors
-func (s *DHCPSession) Error(err string) error {
-	return fmt.Errorf(err)
-}
-
-// Authenticate allows authentication to OPNsense DHCP lease web page
-func (s *DHCPSession) Authenticate(rootURI, user, password string) error {
-
-	s.RootURI = rootURI
-	s.Session = requests.Requests()
-
-	// do a basic query
-	resp, err := s.Session.Get(s.RootURI)
-	if err != nil {
-		return err
-	}
-
-	// fetch up cookies
-	s.Cookies = resp.Cookies()
-
-	// read CSRF token
-	re := regexp.MustCompile(`"X-CSRFToken", "(.*)" \);`)
-	csrf := re.FindSubmatch([]byte(resp.Text()))
-	s.CSRF = string(csrf[1])
-
-	// re-try with authentication
-	data := requests.Datas{
-		"login":       "Login",
-		"usernamefld": user,
-		"passwordfld": password,
-	}
-	s.Session.Header.Set("X-CSRFToken", s.CSRF)
-	resp, err = s.Session.Post(s.RootURI, data)
-	if err != nil {
-		return err
-	}
-
-	return nil
-}
-
-// IsAuthenticated throws an error if no session has been initialized
-func (s *DHCPSession) IsAuthenticated() error {
-	if s.CSRF == "" {
-		return fmt.Errorf("can't establish a session to OPNSense")
-	}
-	return nil
 }
 
 // GetStaticFieldNames extracts the HTML page leases headers for creation/edition
@@ -175,14 +123,14 @@ func (s *DHCPSession) GetAllInterfaceStaticMappings(iface string) ([]StaticMappi
 	entries := []StaticMapping{}
 
 	// check for proper authentication
-	err := s.IsAuthenticated()
+	err := s.OPN.IsAuthenticated()
 	if err != nil {
 		return entries, err
 	}
 
 	// read out the service page
-	dhcpURI := fmt.Sprintf("%s%s?if=%s", s.RootURI, DHCPServiceURI, iface)
-	resp, err := s.Session.Get(dhcpURI)
+	dhcpURI := fmt.Sprintf("%s%s?if=%s", s.OPN.RootURI, DHCPServiceURI, iface)
+	resp, err := s.OPN.Session.Get(dhcpURI)
 	if err != nil {
 		return entries, err
 	}
@@ -231,8 +179,8 @@ func (s *DHCPSession) Apply(iface, formName, formValue string) error {
 		data[formName] = formValue
 	}
 
-	applyURI := fmt.Sprintf("%s%s?if=%s", s.RootURI, DHCPServiceURI, iface)
-	_, err := s.Session.Post(applyURI, data)
+	applyURI := fmt.Sprintf("%s%s?if=%s", s.OPN.RootURI, DHCPServiceURI, iface)
+	_, err := s.OPN.Session.Post(applyURI, data)
 	if err != nil {
 		return err
 	}
@@ -243,11 +191,11 @@ func (s *DHCPSession) Apply(iface, formName, formValue string) error {
 func (s *DHCPSession) CreateOrEdit(m *StaticMapping) error {
 
 	// get the edit page to retrieve form secret values
-	editURI := fmt.Sprintf("%s%s?if=%s", s.RootURI, DHCPServiceEditURI, m.Interface)
+	editURI := fmt.Sprintf("%s%s?if=%s", s.OPN.RootURI, DHCPServiceEditURI, m.Interface)
 	if m.ID != -1 {
 		editURI = fmt.Sprintf("%s&id=%d", editURI, m.ID)
 	}
-	resp, err := s.Session.Get(editURI)
+	resp, err := s.OPN.Session.Get(editURI)
 	if err != nil {
 		return err
 	}
@@ -280,7 +228,7 @@ func (s *DHCPSession) CreateOrEdit(m *StaticMapping) error {
 		data["id"] = fmt.Sprintf("%d", m.ID)
 	}
 
-	resp, err = s.Session.Post(editURI, data)
+	resp, err = s.OPN.Session.Post(editURI, data)
 	if err != nil {
 		return err
 	}
@@ -311,7 +259,7 @@ func (s *DHCPSession) FindMappingByMAC(m *StaticMapping) (*StaticMapping, error)
 		}
 	}
 
-	return nil, s.Error(ErrNoSuchMAC)
+	return nil, s.OPN.Error(ErrNoSuchMAC)
 }
 
 // CreateStaticMapping creates a new static lease
@@ -321,7 +269,7 @@ func (s *DHCPSession) CreateStaticMapping(m *StaticMapping) error {
 
 	// check if the MAC address is not already registered
 	if e != nil {
-		return s.Error(ErrMACExists)
+		return s.OPN.Error(ErrMACExists)
 	}
 
 	// create the mapping entry
@@ -380,7 +328,7 @@ func (s *DHCPSession) DeleteStaticMapping(m *StaticMapping) error {
 	}
 
 	// get the edit page to retrieve form secret values
-	dhcpURI := fmt.Sprintf("%s%s?if=%s", s.RootURI, DHCPServiceURI, e.Interface)
+	dhcpURI := fmt.Sprintf("%s%s?if=%s", s.OPN.RootURI, DHCPServiceURI, e.Interface)
 
 	// destroy DHCP entry
 	data := requests.Datas{
@@ -389,7 +337,7 @@ func (s *DHCPSession) DeleteStaticMapping(m *StaticMapping) error {
 		"act": "del",
 	}
 
-	_, err = s.Session.Post(dhcpURI, data)
+	_, err = s.OPN.Session.Post(dhcpURI, data)
 	if err != nil {
 		return err
 	}

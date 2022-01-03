@@ -11,6 +11,7 @@ import (
 
 // ProviderConfiguration struct for opnsense-provider
 type ProviderConfiguration struct {
+	OPN   *OPNSession
 	DHCP  *DHCPSession
 	Mutex *sync.Mutex
 	Cond  *sync.Cond
@@ -63,13 +64,17 @@ func providerConfigure(d *schema.ResourceData) (interface{}, error) {
 	}
 
 	var mut sync.Mutex
-	var dhcp DHCPSession
+	var opn OPNSession
+	var dhcp = DHCPSession{
+		OPN: &opn,
+	}
 	var provider = ProviderConfiguration{
+		OPN:   &opn,
 		DHCP:  &dhcp,
 		Mutex: &mut,
 		Cond:  sync.NewCond(&mut),
 	}
-	err := provider.DHCP.Authenticate(uri, user, password)
+	err := provider.OPN.Authenticate(uri, user, password)
 	if err != nil {
 		return nil, fmt.Errorf("Failed to connect to OPNSense")
 	}
