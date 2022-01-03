@@ -13,6 +13,7 @@ import (
 type ProviderConfiguration struct {
 	OPN   *OPNSession
 	DHCP  *DHCPSession
+	DNS   *DNSSession
 	Mutex *sync.Mutex
 	Cond  *sync.Cond
 }
@@ -45,7 +46,8 @@ func Provider() terraform.ResourceProvider {
 		},
 
 		ResourcesMap: map[string]*schema.Resource{
-			"opnsense_dhcp_static_map": resourceOpnDHCPStaticMap(),
+			"opnsense_dhcp_static_map":   resourceOpnDHCPStaticMap(),
+			"opnsense_dns_host_override": resourceOpnDNSHostOverride(),
 		},
 
 		ConfigureFunc: providerConfigure,
@@ -68,9 +70,13 @@ func providerConfigure(d *schema.ResourceData) (interface{}, error) {
 	var dhcp = DHCPSession{
 		OPN: &opn,
 	}
+	var dns = DNSSession{
+		OPN: &opn,
+	}
 	var provider = ProviderConfiguration{
 		OPN:   &opn,
 		DHCP:  &dhcp,
+		DNS:   &dns,
 		Mutex: &mut,
 		Cond:  sync.NewCond(&mut),
 	}

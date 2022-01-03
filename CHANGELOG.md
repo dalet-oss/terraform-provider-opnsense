@@ -1,3 +1,8 @@
+## 0.3.0 (January 3rd, 2022)
+
+* refactor generic Session handling
+* add UnboundDNS support
+
 ## 0.2.1 (December 10th, 2021)
 
 * ignore case when comparing MAC identifiers
