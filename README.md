@@ -1,6 +1,8 @@
 # Terraform provider for OPNSense
 
-This is a Terraform provider that lets you provision DHCP static mappings on OPNSense instance.
+This is a Terraform provider that lets you:
+- provision DHCP static mappings on OPNSense instance
+- provision UnboundDNS host overrides
 
 What is *NOT* in scope:
 
@@ -48,6 +50,13 @@ resource "opnsense_dhcp_static_map" "dhcp1" {
   mac       = "00:11:22:33:44:55"
   ipaddr    = "192.168.0.100"
   hostname  = "my_hostname"
+}
+
+resource "opnsense_dns_host_override" "dns1" {
+  type   = "A"
+  host   = "www"
+  domain = "acme.local"
+  ip     = "192.168.0.1"
 }
 ```
 
