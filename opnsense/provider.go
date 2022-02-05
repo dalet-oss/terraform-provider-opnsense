@@ -43,6 +43,12 @@ func Provider() terraform.ResourceProvider {
 				ValidateFunc: validation.All(validation.StringIsNotEmpty),
 				Description:  "OPNsense platform user password",
 			},
+			"allow_unverified_tls": {
+				Type:        schema.TypeBool,
+				Optional:    true,
+				DefaultFunc: schema.EnvDefaultFunc("OPNSENSE_ALLOW_UNVERIFIED_TLS", false),
+				Description: "Allow connection to a OPNsense server without verified TLS",
+			},
 		},
 
 		ResourcesMap: map[string]*schema.Resource{
@@ -60,6 +66,7 @@ func providerConfigure(d *schema.ResourceData) (interface{}, error) {
 	uri := d.Get("uri").(string)
 	user := d.Get("user").(string)
 	password := d.Get("password").(string)
+	skipTLS := d.Get("allow_unverified_tls").(bool)
 
 	if uri == "" || user == "" || password == "" {
 		return nil, fmt.Errorf("The opnsense provider needs proper initialization parameters")
@@ -80,7 +87,7 @@ func providerConfigure(d *schema.ResourceData) (interface{}, error) {
 		Mutex: &mut,
 		Cond:  sync.NewCond(&mut),
 	}
-	err := provider.OPN.Authenticate(uri, user, password)
+	err := provider.OPN.Authenticate(uri, user, password, skipTLS)
 	if err != nil {
 		return nil, fmt.Errorf("Failed to connect to OPNSense")
 	}
