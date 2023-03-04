@@ -1,10 +1,12 @@
 package opnsense
 
 import (
+	"crypto/tls"
 	"fmt"
-	"github.com/asmcos/requests"
 	"net/http"
 	"regexp"
+
+	"github.com/asmcos/requests"
 )
 
 // OPNSession abstracts OPNSense connection
@@ -21,8 +23,11 @@ func (s *OPNSession) Error(err string) error {
 }
 
 // Authenticate allows authentication to OPNsense main web page
-func (s *OPNSession) Authenticate(rootURI, user, password string) error {
+func (s *OPNSession) Authenticate(rootURI, user, password string, insecureSkipVerify bool) error {
 
+	if insecureSkipVerify {
+		http.DefaultTransport.(*http.Transport).TLSClientConfig = &tls.Config{InsecureSkipVerify: true}
+	}
 	s.RootURI = rootURI
 	s.Session = requests.Requests()
 
